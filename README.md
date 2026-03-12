@@ -4,8 +4,6 @@ Interactive map showing where in Spain you can see the **August 12, 2026 total s
 
 The sun will be only ~5° above the horizon during totality in NE Spain, making terrain obstruction a real concern. This tool computes line-of-sight from every point in the totality zone and shows which locations have a clear view of the sun throughout the entire eclipse.
 
-![Map screenshot](https://img.shields.io/badge/status-pre--computed-blue)
-
 ## What it does
 
 - Downloads 30m-resolution elevation data (SRTM1) for the totality zone in Spain

@@ -336,7 +336,7 @@ def margin_to_color(margin):
     elif margin >= 1.0:
         return (66, 165, 245, 180)    # light blue
     elif margin >= 0.0:
-        return (255, 193, 7, 180)     # amber (risky)
+        return (144, 202, 249, 180)   # pale blue (clear but tight)
     elif margin >= -1.0:
         return (255, 152, 0, 180)     # orange (partially blocked)
     else:

@@ -121,7 +121,8 @@ def haversine_approx(lat1, lon1, lat2, lon2):
 
 def margin_to_color(margin, road_dist):
     """Map margin + road distance to RGBA color."""
-    # Base color from margin (blue palette to contrast with green map)
+    # Base color from margin
+    # Blue family = clear view, warm colors = blocked/partial
     if margin >= 3.0:
         r, g, b = 21, 101, 192      # deep blue
     elif margin >= 2.0:
@@ -129,11 +130,11 @@ def margin_to_color(margin, road_dist):
     elif margin >= 1.0:
         r, g, b = 66, 165, 245      # light blue
     elif margin >= 0.0:
-        r, g, b = 255, 193, 7       # amber
+        r, g, b = 144, 202, 249     # pale blue (clear but tight)
     elif margin >= -1.0:
-        r, g, b = 255, 152, 0       # orange
+        r, g, b = 255, 152, 0       # orange (partial block)
     else:
-        r, g, b = 244, 67, 54       # red
+        r, g, b = 244, 67, 54       # red (fully blocked)
 
     # Dim based on road distance
     if road_dist <= ROADSIDE:

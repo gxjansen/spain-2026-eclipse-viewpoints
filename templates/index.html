@@ -74,6 +74,20 @@
   .marker-actions button:hover { background: #f5f5f5; }
   .marker-actions button.pin { border-color: #1E88E5; color: #1565C0; }
   .marker-actions button.remove { border-color: #F44336; color: #D32F2F; }
+
+  .toggle-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+  }
+  .toggle-row input[type="checkbox"] {
+    width: 15px; height: 15px; accent-color: #1565C0; cursor: pointer;
+  }
+  .toggle-row label { cursor: pointer; font-weight: 600; font-size: 13px; color: #333; }
+
+  .legend-pattern {
+    width: 20px; height: 14px; border-radius: 2px;
+    border: 1px solid rgba(0,0,0,0.15); flex-shrink: 0; position: relative;
+    overflow: hidden;
+  }
 </style>
 </head>
 <body>
@@ -155,40 +169,61 @@ function doSearch() {
     });
 }
 
-// --- Markers ---
+// --- Markers (persisted in localStorage) ---
 const markers = [];
 const markerGroup = L.layerGroup().addTo(map);
+const STORAGE_KEY = 'eclipse-viewer-markers';
 
-function addMarker(lat, lon, label) {
+function saveMarkers() {
+  const data = markers.map(m => {
+    const pos = m.getLatLng();
+    return { lat: pos.lat, lon: pos.lng, label: m._label };
+  });
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function loadMarkers() {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    data.forEach(d => addMarker(d.lat, d.lon, d.label, true));
+  } catch(e) {}
+}
+
+function addMarker(lat, lon, label, silent) {
   const marker = L.marker([lat, lon], {
     draggable: true,
     title: label || `${lat.toFixed(3)}, ${lon.toFixed(3)}`,
   }).addTo(markerGroup);
+  marker._label = label || `Marker ${markers.length + 1}`;
 
-  // Show info on marker click
   marker.on('click', function() {
-    showInfoAt(lat, lon, marker);
-  });
-
-  // Update info when dragged
-  marker.on('dragend', function(e) {
-    const pos = e.target.getLatLng();
+    const pos = marker.getLatLng();
     showInfoAt(pos.lat, pos.lng, marker);
   });
 
-  marker.bindTooltip(label || `Marker ${markers.length + 1}`, {
+  marker.on('dragend', function(e) {
+    const pos = e.target.getLatLng();
+    showInfoAt(pos.lat, pos.lng, marker);
+    saveMarkers();
+  });
+
+  marker.bindTooltip(marker._label, {
     permanent: true, direction: 'top', offset: [0, -10],
     className: 'marker-tooltip',
   });
 
   markers.push(marker);
-  showInfoAt(lat, lon, marker);
+  if (!silent) {
+    showInfoAt(lat, lon, marker);
+    saveMarkers();
+  }
 }
 
 function removeMarker(marker) {
   markerGroup.removeLayer(marker);
   const idx = markers.indexOf(marker);
   if (idx >= 0) markers.splice(idx, 1);
+  saveMarkers();
 }
 
 // --- Legend ---
@@ -196,17 +231,50 @@ const legend = L.control({ position: 'bottomright' });
 legend.onAdd = function() {
   const div = L.DomUtil.create('div', 'legend');
   div.innerHTML = `
-    <h4>Eclipse Visibility</h4>
-    <div class="legend-item"><div class="legend-color" style="background:#1565C0"></div> Clear (3°+ margin)</div>
-    <div class="legend-item"><div class="legend-color" style="background:#1E88E5"></div> Clear (2-3° margin)</div>
-    <div class="legend-item"><div class="legend-color" style="background:#42A5F5"></div> Clear (1-2° margin)</div>
-    <div class="legend-item"><div class="legend-color" style="background:#FFC107"></div> Risky (0-1° margin)</div>
-    <div class="legend-item"><div class="legend-color" style="background:#FF9800"></div> Partial block</div>
-    <div class="legend-item"><div class="legend-color" style="background:#F44336"></div> Fully blocked</div>
+    <div class="toggle-row">
+      <input type="checkbox" id="toggle-visibility" checked>
+      <label for="toggle-visibility">Eclipse Visibility</label>
+    </div>
+    <div id="legend-visibility">
+      <div class="legend-item"><div class="legend-color" style="background:#1565C0"></div> Clear (3°+ margin)</div>
+      <div class="legend-item"><div class="legend-color" style="background:#1E88E5"></div> Clear (2-3° margin)</div>
+      <div class="legend-item"><div class="legend-color" style="background:#42A5F5"></div> Clear (1-2° margin)</div>
+      <div class="legend-item"><div class="legend-color" style="background:#90CAF9"></div> Clear (0-1° margin)</div>
+      <div class="legend-item"><div class="legend-color" style="background:#FF9800"></div> Partially blocked</div>
+      <div class="legend-item"><div class="legend-color" style="background:#F44336"></div> Fully blocked</div>
+    </div>
     <div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px">
-      <div class="legend-item"><div class="legend-color" style="background:rgba(30,136,229,0.8)"></div> Near road (&lt;300m)</div>
-      <div class="legend-item"><div class="legend-color" style="background:rgba(30,136,229,0.5)"></div> Walk (&lt;1km)</div>
-      <div class="legend-item"><div class="legend-color" style="background:rgba(100,120,140,0.35)"></div> Hike / Remote</div>
+      <div class="toggle-row">
+        <input type="checkbox" id="toggle-roads" checked>
+        <label for="toggle-roads">Road Reachability</label>
+      </div>
+      <div id="legend-roads">
+        <div class="legend-item"><div class="legend-color" style="background:transparent"></div> Near road (&lt;300m)</div>
+        <div class="legend-item">
+          <svg width="20" height="14" viewBox="0 0 20 14" style="flex-shrink:0">
+            <rect width="20" height="14" fill="#f5f5f5" stroke="rgba(0,0,0,0.15)" stroke-width="1" rx="2"/>
+            <line x1="0" y1="14" x2="5" y2="0" stroke="#555" stroke-width="0.8"/>
+            <line x1="10" y1="14" x2="15" y2="0" stroke="#555" stroke-width="0.8"/>
+          </svg> Walk (&lt;1km)
+        </div>
+        <div class="legend-item">
+          <svg width="20" height="14" viewBox="0 0 20 14" style="flex-shrink:0">
+            <rect width="20" height="14" fill="#eee" stroke="rgba(0,0,0,0.15)" stroke-width="1" rx="2"/>
+            <line x1="0" y1="14" x2="4" y2="0" stroke="#444" stroke-width="1"/>
+            <line x1="7" y1="14" x2="11" y2="0" stroke="#444" stroke-width="1"/>
+            <line x1="14" y1="14" x2="18" y2="0" stroke="#444" stroke-width="1"/>
+          </svg> Hike (&lt;3km)
+        </div>
+        <div class="legend-item">
+          <svg width="20" height="14" viewBox="0 0 20 14" style="flex-shrink:0">
+            <rect width="20" height="14" fill="#ddd" stroke="rgba(0,0,0,0.15)" stroke-width="1" rx="2"/>
+            <line x1="0" y1="14" x2="3" y2="0" stroke="#333" stroke-width="1.2"/>
+            <line x1="5" y1="14" x2="8" y2="0" stroke="#333" stroke-width="1.2"/>
+            <line x1="10" y1="14" x2="13" y2="0" stroke="#333" stroke-width="1.2"/>
+            <line x1="15" y1="14" x2="18" y2="0" stroke="#333" stroke-width="1.2"/>
+          </svg> Remote (&gt;3km)
+        </div>
+      </div>
     </div>
     <div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px">
       <div class="legend-item">
@@ -214,11 +282,23 @@ legend.onAdd = function() {
         Optimal spot (clear + roadside)
       </div>
     </div>
+    <div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:12px;color:#555">Cluster spacing</span>
+        <span id="cluster-value" style="font-size:12px;font-weight:600;color:#333">28 km</span>
+      </div>
+      <input type="range" id="cluster-slider" min="10" max="45" value="28" step="1"
+        style="width:100%;accent-color:#1565C0;cursor:pointer">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#999">
+        <span>11 km</span><span>45 km</span>
+      </div>
+    </div>
     <div style="margin-top:6px;font-size:11px;color:#888;">
-      Faded = far from roads<br>
       Click for details, right-click to pin marker
     </div>
   `;
+  L.DomEvent.disableClickPropagation(div);
+  L.DomEvent.disableScrollPropagation(div);
   return div;
 };
 legend.addTo(map);
@@ -320,17 +400,23 @@ function showInfoAt(lat, lon, marker) {
       </div>`;
   }
 
+  const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(5)},${lon.toFixed(5)}`;
+
   let markerHtml = '';
   if (marker) {
     markerHtml = `
       <div class="marker-actions">
         <button class="remove" onclick="removeClickedMarker()">Remove marker</button>
+        <a href="${gmapsUrl}" target="_blank" rel="noopener" style="text-decoration:none">
+          <button type="button">Google Maps</button></a>
       </div>`;
     window._lastClickedMarker = marker;
   } else {
     markerHtml = `
       <div class="marker-actions">
         <button class="pin" onclick="pinAt(${lat}, ${lon})">Pin marker here</button>
+        <a href="${gmapsUrl}" target="_blank" rel="noopener" style="text-decoration:none">
+          <button type="button">Google Maps</button></a>
       </div>`;
   }
 
@@ -378,11 +464,28 @@ fetch('/data/grid_data.json')
     const m = data.meta;
 
     const bounds = [[m.lat_min, m.lon_min], [m.lat_max, m.lon_max]];
-    L.imageOverlay('/data/overlay.png', bounds, {
+
+    // Two separate overlay layers
+    const visibilityLayer = L.imageOverlay('/data/overlay_visibility.png', bounds, {
       opacity: 0.7, interactive: true,
     }).addTo(map);
 
+    const roadsLayer = L.imageOverlay('/data/overlay_roads.png', bounds, {
+      opacity: 0.8, interactive: true,
+    }).addTo(map);
+
     map.fitBounds(bounds, { padding: [40, 40] });
+
+    // Toggle handlers
+    document.getElementById('toggle-visibility').addEventListener('change', function() {
+      if (this.checked) visibilityLayer.addTo(map); else map.removeLayer(visibilityLayer);
+    });
+    document.getElementById('toggle-roads').addEventListener('change', function() {
+      if (this.checked) roadsLayer.addTo(map); else map.removeLayer(roadsLayer);
+    });
+
+    // Restore saved markers
+    loadMarkers();
 
     // Left click: show info
     map.on('click', function(e) {
@@ -398,7 +501,17 @@ fetch('/data/grid_data.json')
     });
 
     // --- Optimal spots ---
-    findOptimalSpots(data);
+    findOptimalSpots(data, 28);
+
+    // Wire up cluster slider
+    const slider = document.getElementById('cluster-slider');
+    const valLabel = document.getElementById('cluster-value');
+    slider.addEventListener('input', function() {
+      valLabel.textContent = slider.value + ' km';
+    });
+    slider.addEventListener('change', function() {
+      findOptimalSpots(data, parseInt(slider.value));
+    });
   })
   .catch(err => {
     console.error('Failed to load grid data:', err);
@@ -421,23 +534,49 @@ const starIcon = L.divIcon({
 
 const optimalGroup = L.layerGroup().addTo(map);
 
-function findOptimalSpots(data) {
+function findOptimalSpots(data, clusterKm) {
   const m = data.meta;
   const grid = data.grid;
-  const TILE = 0.1; // cluster tile size in degrees
+  // Convert km to degrees (1° lat ≈ 111 km)
+  const TILE = clusterKm / 111;
+  const NEIGHBOR_R = 3; // check 3-cell radius (~3km) around candidate
 
-  // Collect candidates: margin >= 3.0, road <= 300m
+  // Clear previous stars
+  optimalGroup.clearLayers();
+
+  // Build a set of "good" cells (clear, margin >= 2.0) for neighborhood check
+  const goodCells = new Set();
+  for (const [key, arr] of Object.entries(grid)) {
+    if (arr[0] === 0 && arr[1] >= 2.0) goodCells.add(key);
+  }
+
+  // Collect candidates: clear status, margin >= 3.0, road <= 300m,
+  // AND majority of neighbors are also good (avoids isolated cells in red zones)
   const candidates = [];
   for (const [key, arr] of Object.entries(grid)) {
     const margin = arr[1];
-    if (margin < 3.0 || arr[0] !== 0) continue; // must be clear status
+    if (margin < 3.0 || arr[0] !== 0) continue;
 
     let roadDist = 99999;
     if (arr.length === 9) roadDist = arr[8];
     else if (arr.length === 11) roadDist = arr[10];
     if (roadDist > 300) continue;
 
+    // Check neighborhood: at least 60% of surrounding cells must also be good
     const [imgRow, col] = key.split(',').map(Number);
+    let total = 0, good = 0;
+    for (let dr = -NEIGHBOR_R; dr <= NEIGHBOR_R; dr++) {
+      for (let dc = -NEIGHBOR_R; dc <= NEIGHBOR_R; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nk = (imgRow + dr) + ',' + (col + dc);
+        if (nk in grid) {
+          total++;
+          if (goodCells.has(nk)) good++;
+        }
+      }
+    }
+    if (total > 0 && good / total < 0.6) continue;
+
     const rowFromSouth = m.rows - 1 - imgRow;
     const lat = m.lat_min + (rowFromSouth + 0.5) * m.step;
     const lon = m.lon_min + (col + 0.5) * m.step;
@@ -457,12 +596,12 @@ function findOptimalSpots(data) {
   }
 
   const spots = Object.values(tiles);
-  console.log(`Found ${candidates.length} optimal cells, ${spots.length} after clustering`);
+  console.log(`Found ${candidates.length} optimal cells (after neighborhood filter), ${spots.length} after clustering`);
 
   for (const s of spots) {
-    const m = L.marker([s.lat, s.lon], { icon: starIcon, interactive: true })
+    const mk = L.marker([s.lat, s.lon], { icon: starIcon, interactive: true })
       .addTo(optimalGroup);
-    m.on('click', function() { showInfoAt(s.lat, s.lon); });
+    mk.on('click', function() { showInfoAt(s.lat, s.lon); });
   }
 }
 </script>

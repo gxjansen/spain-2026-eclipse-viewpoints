@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eclipse Terrain Viewer — Aug 12, 2026</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Source Sans 3', system-ui, sans-serif; }
+  #map { width: 100vw; height: 100vh; }
+
+  .legend {
+    background: white;
+    padding: 12px 16px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    line-height: 1.6;
+    font-size: 13px;
+  }
+  .legend h4 { margin: 0 0 6px; font-size: 14px; color: #333; }
+  .legend-item { display: flex; align-items: center; gap: 8px; }
+  .legend-color {
+    width: 20px; height: 14px; border-radius: 2px;
+    border: 1px solid rgba(0,0,0,0.15); flex-shrink: 0;
+  }
+
+  .info-panel {
+    background: white; padding: 12px 16px; border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 13px;
+    max-width: 300px; line-height: 1.5;
+  }
+  .info-panel h4 { margin: 0 0 4px; font-size: 14px; }
+  .info-panel .status-clear { color: #1565C0; }
+  .info-panel .status-partial { color: #F57C00; }
+  .info-panel .status-blocked { color: #D32F2F; }
+  .info-row { display: flex; justify-content: space-between; gap: 12px; }
+  .info-label { color: #666; }
+  .info-value { font-weight: 600; color: #333; text-align: right; }
+  .info-section { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eee; }
+
+  .search-box {
+    background: white; padding: 8px 12px; border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 13px;
+  }
+  .search-box input {
+    border: 1px solid #ccc; border-radius: 4px; padding: 6px 10px;
+    font-size: 13px; width: 220px; font-family: inherit;
+  }
+  .search-box input:focus { outline: none; border-color: #1E88E5; }
+  .search-box button {
+    border: none; background: #1565C0; color: white; padding: 6px 12px;
+    border-radius: 4px; cursor: pointer; font-size: 13px; margin-left: 4px;
+  }
+  .search-box button:hover { background: #0D47A1; }
+  .search-results {
+    margin-top: 6px; max-height: 200px; overflow-y: auto;
+  }
+  .search-result {
+    padding: 4px 0; cursor: pointer; color: #1565C0;
+    border-bottom: 1px solid #eee; font-size: 12px;
+  }
+  .search-result:hover { color: #0D47A1; }
+  .search-error { color: #999; font-size: 12px; margin-top: 4px; }
+
+  .marker-actions {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;
+  }
+  .marker-actions button {
+    border: 1px solid #ccc; background: white; padding: 4px 10px;
+    border-radius: 4px; cursor: pointer; font-size: 12px; margin-right: 4px;
+  }
+  .marker-actions button:hover { background: #f5f5f5; }
+  .marker-actions button.pin { border-color: #1E88E5; color: #1565C0; }
+  .marker-actions button.remove { border-color: #F44336; color: #D32F2F; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+const map = L.map('map', { preferCanvas: true }).setView([42.0, -3.0], 7);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 18,
+}).addTo(map);
+
+const terrain = L.tileLayer(
+  'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenTopoMap', maxZoom: 17,
+});
+
+L.control.layers({
+  'Street Map': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap', maxZoom: 18,
+  }).addTo(map),
+  'Terrain': terrain,
+}, {}, { position: 'topright' }).addTo(map);
+
+// --- Search box ---
+const search = L.control({ position: 'topleft' });
+search.onAdd = function() {
+  const div = L.DomUtil.create('div', 'search-box');
+  div.innerHTML = `
+    <div style="display:flex">
+      <input type="text" id="search-input" placeholder="Search for a place...">
+      <button id="search-btn">Go</button>
+    </div>
+    <div id="search-results" class="search-results"></div>
+  `;
+  L.DomEvent.disableClickPropagation(div);
+  L.DomEvent.disableScrollPropagation(div);
+  return div;
+};
+search.addTo(map);
+
+document.getElementById('search-btn').addEventListener('click', doSearch);
+document.getElementById('search-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doSearch();
+});
+
+function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) return;
+  const resultsDiv = document.getElementById('search-results');
+  resultsDiv.innerHTML = '<div class="search-error">Searching...</div>';
+
+  // Use Nominatim (OSM geocoder) — free, no API key
+  fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&viewbox=-10.5,39.5,3.5,44.5&bounded=1&limit=5`)
+    .then(r => r.json())
+    .then(results => {
+      if (!results.length) {
+        resultsDiv.innerHTML = '<div class="search-error">No results found in Spain eclipse area</div>';
+        return;
+      }
+      resultsDiv.innerHTML = '';
+      results.forEach(r => {
+        const div = document.createElement('div');
+        div.className = 'search-result';
+        div.textContent = r.display_name.substring(0, 80);
+        div.addEventListener('click', function() {
+          const lat = parseFloat(r.lat);
+          const lon = parseFloat(r.lon);
+          map.setView([lat, lon], 12);
+          resultsDiv.innerHTML = '';
+          // Simulate a click at that location to show info
+          showInfoAt(lat, lon);
+        });
+        resultsDiv.appendChild(div);
+      });
+    })
+    .catch(() => {
+      resultsDiv.innerHTML = '<div class="search-error">Search failed</div>';
+    });
+}
+
+// --- Markers ---
+const markers = [];
+const markerGroup = L.layerGroup().addTo(map);
+
+function addMarker(lat, lon, label) {
+  const marker = L.marker([lat, lon], {
+    draggable: true,
+    title: label || `${lat.toFixed(3)}, ${lon.toFixed(3)}`,
+  }).addTo(markerGroup);
+
+  // Show info on marker click
+  marker.on('click', function() {
+    showInfoAt(lat, lon, marker);
+  });
+
+  // Update info when dragged
+  marker.on('dragend', function(e) {
+    const pos = e.target.getLatLng();
+    showInfoAt(pos.lat, pos.lng, marker);
+  });
+
+  marker.bindTooltip(label || `Marker ${markers.length + 1}`, {
+    permanent: true, direction: 'top', offset: [0, -10],
+    className: 'marker-tooltip',
+  });
+
+  markers.push(marker);
+  showInfoAt(lat, lon, marker);
+}
+
+function removeMarker(marker) {
+  markerGroup.removeLayer(marker);
+  const idx = markers.indexOf(marker);
+  if (idx >= 0) markers.splice(idx, 1);
+}
+
+// --- Legend ---
+const legend = L.control({ position: 'bottomright' });
+legend.onAdd = function() {
+  const div = L.DomUtil.create('div', 'legend');
+  div.innerHTML = `
+    <h4>Eclipse Visibility</h4>
+    <div class="legend-item"><div class="legend-color" style="background:#1565C0"></div> Clear (3°+ margin)</div>
+    <div class="legend-item"><div class="legend-color" style="background:#1E88E5"></div> Clear (2-3° margin)</div>
+    <div class="legend-item"><div class="legend-color" style="background:#42A5F5"></div> Clear (1-2° margin)</div>
+    <div class="legend-item"><div class="legend-color" style="background:#FFC107"></div> Risky (0-1° margin)</div>
+    <div class="legend-item"><div class="legend-color" style="background:#FF9800"></div> Partial block</div>
+    <div class="legend-item"><div class="legend-color" style="background:#F44336"></div> Fully blocked</div>
+    <div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px">
+      <div class="legend-item"><div class="legend-color" style="background:rgba(30,136,229,0.8)"></div> Near road (&lt;300m)</div>
+      <div class="legend-item"><div class="legend-color" style="background:rgba(30,136,229,0.5)"></div> Walk (&lt;1km)</div>
+      <div class="legend-item"><div class="legend-color" style="background:rgba(100,120,140,0.35)"></div> Hike / Remote</div>
+    </div>
+    <div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px">
+      <div class="legend-item">
+        <svg width="20" height="14" viewBox="0 0 20 20" style="flex-shrink:0"><polygon points="10,1 12.5,7.5 19,8 14,12.5 15.5,19 10,15.5 4.5,19 6,12.5 1,8 7.5,7.5" fill="#FFD600" stroke="#F57F17" stroke-width="1.2"/></svg>
+        Optimal spot (clear + roadside)
+      </div>
+    </div>
+    <div style="margin-top:6px;font-size:11px;color:#888;">
+      Faded = far from roads<br>
+      Click for details, right-click to pin marker
+    </div>
+  `;
+  return div;
+};
+legend.addTo(map);
+
+// --- Info panel ---
+const info = L.control({ position: 'topright' });
+info.onAdd = function() {
+  this._div = L.DomUtil.create('div', 'info-panel');
+  this._div.innerHTML = '<h4>Click on the overlay for details</h4><div style="font-size:12px;color:#888;">Right-click to place a marker</div>';
+  return this._div;
+};
+info.addTo(map);
+
+// --- Data loading and display ---
+let gridData = null;
+
+function lookupGrid(lat, lon) {
+  if (!gridData) return null;
+  const m = gridData.meta;
+  const row_from_south = Math.floor((lat - m.lat_min) / m.step);
+  const col = Math.floor((lon - m.lon_min) / m.step);
+  const img_row = m.rows - 1 - row_from_south;
+  const key = img_row + ',' + col;
+  return gridData.grid[key] || null;
+}
+
+function utcToCest(utcStr) {
+  const parts = utcStr.split(':');
+  let h = parseInt(parts[0]) + 2;
+  if (h >= 24) h -= 24;
+  return h.toString().padStart(2,'0') + ':' + parts[1] + ':' + parts[2];
+}
+
+function showInfoAt(lat, lon, marker) {
+  const arr = lookupGrid(lat, lon);
+
+  if (!arr) {
+    info._div.innerHTML = `
+      <h4>Outside totality zone</h4>
+      <div style="color:#666">
+        ${lat.toFixed(3)}°N, ${Math.abs(lon).toFixed(3)}°${lon >= 0 ? 'E' : 'W'}<br>
+        No total eclipse visible at this location.
+      </div>`;
+    return;
+  }
+
+  const STATUS_NAMES = ['clear', 'partial', 'blocked'];
+  const STATUS_LABELS = ['Clear view', 'Partially blocked', 'Blocked by terrain'];
+  const status = STATUS_NAMES[arr[0]];
+  const statusClass = 'status-' + status;
+  const statusLabel = STATUS_LABELS[arr[0]];
+  const margin = arr[1], elev = arr[2], sunAlt = arr[3], sunAz = arr[4];
+  const c2 = arr[5], c3 = arr[6], dur = arr[7];
+
+  // After base 8 fields: blocked cells have [block_angle, block_dist],
+  // then road_dist is always the last element (if road data was added)
+  let blockAngle = null, blockDist = null, roadDist = null;
+  if (arr.length === 9) {
+    // No block info, just road distance
+    roadDist = arr[8];
+  } else if (arr.length === 10) {
+    // Block info, no road distance
+    blockAngle = arr[8]; blockDist = arr[9];
+  } else if (arr.length === 11) {
+    // Block info + road distance
+    blockAngle = arr[8]; blockDist = arr[9]; roadDist = arr[10];
+  }
+
+  let blockHtml = '';
+  if (blockAngle !== null) {
+    blockHtml = `
+      <div class="info-section">
+        <div style="color:#D32F2F;font-weight:600">Obstruction</div>
+        <div class="info-row"><span class="info-label">Direction</span>
+          <span class="info-value">${sunAz}° (${azToDir(sunAz)})</span></div>
+        <div class="info-row"><span class="info-label">Terrain angle</span>
+          <span class="info-value">${blockAngle}°</span></div>
+        <div class="info-row"><span class="info-label">Distance</span>
+          <span class="info-value">${blockDist} km</span></div>
+        <div class="info-row"><span class="info-label">Sun altitude</span>
+          <span class="info-value">${sunAlt}°</span></div>
+      </div>`;
+  }
+
+  let roadHtml = '';
+  if (roadDist !== null) {
+    let roadLabel, roadColor;
+    if (roadDist <= 300) { roadLabel = 'Roadside'; roadColor = '#1565C0'; }
+    else if (roadDist <= 1000) { roadLabel = 'Short walk'; roadColor = '#1E88E5'; }
+    else if (roadDist <= 3000) { roadLabel = 'Hike required'; roadColor = '#F57C00'; }
+    else { roadLabel = 'Remote'; roadColor = '#D32F2F'; }
+    const distStr = roadDist >= 1000 ? (roadDist/1000).toFixed(1) + ' km' : roadDist + 'm';
+    roadHtml = `
+      <div class="info-section">
+        <div class="info-row"><span class="info-label">Nearest road</span>
+          <span class="info-value">${distStr}</span></div>
+        <div class="info-row"><span class="info-label">Access</span>
+          <span class="info-value" style="color:${roadColor}">${roadLabel}</span></div>
+      </div>`;
+  }
+
+  let markerHtml = '';
+  if (marker) {
+    markerHtml = `
+      <div class="marker-actions">
+        <button class="remove" onclick="removeClickedMarker()">Remove marker</button>
+      </div>`;
+    window._lastClickedMarker = marker;
+  } else {
+    markerHtml = `
+      <div class="marker-actions">
+        <button class="pin" onclick="pinAt(${lat}, ${lon})">Pin marker here</button>
+      </div>`;
+  }
+
+  info._div.innerHTML = `
+    <h4 class="${statusClass}">${statusLabel}</h4>
+    <div style="color:#888;font-size:11px;margin-bottom:4px">
+      ${lat.toFixed(3)}°N, ${Math.abs(lon).toFixed(3)}°${lon >= 0 ? 'E' : 'W'}
+      &middot; ${elev}m elevation
+    </div>
+    <div class="info-section">
+      <div class="info-row"><span class="info-label">Totality</span>
+        <span class="info-value">${utcToCest(c2)} – ${utcToCest(c3)} CEST</span></div>
+      <div class="info-row"><span class="info-label">Duration</span>
+        <span class="info-value">${dur}s</span></div>
+      <div class="info-row"><span class="info-label">Sun altitude</span>
+        <span class="info-value">${sunAlt}°</span></div>
+      <div class="info-row"><span class="info-label">Sun azimuth</span>
+        <span class="info-value">${sunAz}° (${azToDir(sunAz)})</span></div>
+      <div class="info-row"><span class="info-label">Margin</span>
+        <span class="info-value">${margin}°</span></div>
+    </div>
+    ${blockHtml}
+    ${roadHtml}
+    ${markerHtml}
+  `;
+}
+
+window.pinAt = function(lat, lon) {
+  const label = prompt('Label for this marker:', `${lat.toFixed(2)}, ${lon.toFixed(2)}`);
+  if (label !== null) addMarker(lat, lon, label);
+};
+
+window.removeClickedMarker = function() {
+  if (window._lastClickedMarker) {
+    removeMarker(window._lastClickedMarker);
+    window._lastClickedMarker = null;
+    info._div.innerHTML = '<h4>Marker removed</h4>';
+  }
+};
+
+fetch('/data/grid_data.json')
+  .then(r => r.json())
+  .then(data => {
+    gridData = data;
+    const m = data.meta;
+
+    const bounds = [[m.lat_min, m.lon_min], [m.lat_max, m.lon_max]];
+    L.imageOverlay('/data/overlay.png', bounds, {
+      opacity: 0.7, interactive: true,
+    }).addTo(map);
+
+    map.fitBounds(bounds, { padding: [40, 40] });
+
+    // Left click: show info
+    map.on('click', function(e) {
+      showInfoAt(e.latlng.lat, e.latlng.lng);
+    });
+
+    // Right click: place marker directly
+    map.on('contextmenu', function(e) {
+      e.originalEvent.preventDefault();
+      const lat = e.latlng.lat, lon = e.latlng.lng;
+      const label = prompt('Label for this marker:', `${lat.toFixed(2)}, ${lon.toFixed(2)}`);
+      if (label !== null) addMarker(lat, lon, label);
+    });
+
+    // --- Optimal spots ---
+    findOptimalSpots(data);
+  })
+  .catch(err => {
+    console.error('Failed to load grid data:', err);
+    info._div.innerHTML = '<h4 style="color:red">Failed to load data</h4>';
+  });
+
+function azToDir(az) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE',
+                'S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(az / 22.5) % 16];
+}
+
+// --- Optimal spot markers ---
+const starIcon = L.divIcon({
+  html: '<svg width="20" height="20" viewBox="0 0 20 20"><polygon points="10,1 12.5,7.5 19,8 14,12.5 15.5,19 10,15.5 4.5,19 6,12.5 1,8 7.5,7.5" fill="#FFD600" stroke="#F57F17" stroke-width="1.2"/></svg>',
+  className: '',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+});
+
+const optimalGroup = L.layerGroup().addTo(map);
+
+function findOptimalSpots(data) {
+  const m = data.meta;
+  const grid = data.grid;
+  const TILE = 0.1; // cluster tile size in degrees
+
+  // Collect candidates: margin >= 3.0, road <= 300m
+  const candidates = [];
+  for (const [key, arr] of Object.entries(grid)) {
+    const margin = arr[1];
+    if (margin < 3.0 || arr[0] !== 0) continue; // must be clear status
+
+    let roadDist = 99999;
+    if (arr.length === 9) roadDist = arr[8];
+    else if (arr.length === 11) roadDist = arr[10];
+    if (roadDist > 300) continue;
+
+    const [imgRow, col] = key.split(',').map(Number);
+    const rowFromSouth = m.rows - 1 - imgRow;
+    const lat = m.lat_min + (rowFromSouth + 0.5) * m.step;
+    const lon = m.lon_min + (col + 0.5) * m.step;
+    const dur = arr[7];
+
+    candidates.push({ lat, lon, margin, dur, roadDist, key });
+  }
+
+  // Group into tiles, pick best per tile (highest margin, then longest duration)
+  const tiles = {};
+  for (const c of candidates) {
+    const tileKey = Math.floor(c.lat / TILE) + ',' + Math.floor(c.lon / TILE);
+    if (!tiles[tileKey] || c.margin > tiles[tileKey].margin ||
+        (c.margin === tiles[tileKey].margin && c.dur > tiles[tileKey].dur)) {
+      tiles[tileKey] = c;
+    }
+  }
+
+  const spots = Object.values(tiles);
+  console.log(`Found ${candidates.length} optimal cells, ${spots.length} after clustering`);
+
+  for (const s of spots) {
+    const m = L.marker([s.lat, s.lon], { icon: starIcon, interactive: true })
+      .addTo(optimalGroup);
+    m.on('click', function() { showInfoAt(s.lat, s.lon); });
+  }
+}
+</script>
+</body>
+</html>

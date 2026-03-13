@@ -52,7 +52,7 @@ uv run app.py
 
 - **Visibility overlay**: Blue = clear view (4 shades by margin), orange/red = blocked by terrain (toggleable)
 - **Road reachability overlay**: Hatching pattern showing distance to nearest road (toggleable)
-- **Star markers**: Optimal spots combining clear view (3°+ margin), road access, and no forest — adjustable cluster spacing slider
+- **Star markers**: Optimal spots combining clear view (3°+ margin), road access, and no forest — cluster spacing adjustable from 11 to 45 km via slider
 - **Forest detection**: Cells inside mapped forest/woodland are flagged and excluded from optimal spots
 - **Search**: Find places by name (top-left search box)
 - **Click**: Get detailed info for any point (totality times, sun position, margin, road distance, forest status)

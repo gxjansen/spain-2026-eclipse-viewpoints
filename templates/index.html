@@ -353,18 +353,17 @@ function showInfoAt(lat, lon, marker) {
   const margin = arr[1], elev = arr[2], sunAlt = arr[3], sunAz = arr[4];
   const c2 = arr[5], c3 = arr[6], dur = arr[7];
 
-  // After base 8 fields: blocked cells have [block_angle, block_dist],
-  // then road_dist is always the last element (if road data was added)
-  let blockAngle = null, blockDist = null, roadDist = null;
+  // After base 8 fields: optional [block_angle, block_dist], road_dist, forest
+  // Lengths: 9=road, 10=road+forest, 11=block+road, 12=block+road+forest
+  let blockAngle = null, blockDist = null, roadDist = null, inForest = 0;
   if (arr.length === 9) {
-    // No block info, just road distance
     roadDist = arr[8];
   } else if (arr.length === 10) {
-    // Block info, no road distance
-    blockAngle = arr[8]; blockDist = arr[9];
+    roadDist = arr[8]; inForest = arr[9];
   } else if (arr.length === 11) {
-    // Block info + road distance
     blockAngle = arr[8]; blockDist = arr[9]; roadDist = arr[10];
+  } else if (arr.length === 12) {
+    blockAngle = arr[8]; blockDist = arr[9]; roadDist = arr[10]; inForest = arr[11];
   }
 
   let blockHtml = '';
@@ -397,6 +396,15 @@ function showInfoAt(lat, lon, marker) {
           <span class="info-value">${distStr}</span></div>
         <div class="info-row"><span class="info-label">Access</span>
           <span class="info-value" style="color:${roadColor}">${roadLabel}</span></div>
+      </div>`;
+  }
+
+  let forestHtml = '';
+  if (inForest) {
+    forestHtml = `
+      <div class="info-section">
+        <div class="info-row"><span class="info-label">Land cover</span>
+          <span class="info-value" style="color:#2E7D32">In forest/woodland</span></div>
       </div>`;
   }
 
@@ -440,6 +448,7 @@ function showInfoAt(lat, lon, marker) {
     </div>
     ${blockHtml}
     ${roadHtml}
+    ${forestHtml}
     ${markerHtml}
   `;
 }
@@ -539,15 +548,19 @@ function findOptimalSpots(data, clusterKm) {
   const grid = data.grid;
   // Convert km to degrees (1° lat ≈ 111 km)
   const TILE = clusterKm / 111;
-  const NEIGHBOR_R = 3; // check 3-cell radius (~3km) around candidate
+  const NEIGHBOR_R = 5; // check 5-cell radius (~5km) around candidate
 
   // Clear previous stars
   optimalGroup.clearLayers();
 
-  // Build a set of "good" cells (clear, margin >= 2.0) for neighborhood check
+  // Build a set of "good" cells (clear, margin >= 2.0, not in forest)
   const goodCells = new Set();
   for (const [key, arr] of Object.entries(grid)) {
-    if (arr[0] === 0 && arr[1] >= 2.0) goodCells.add(key);
+    if (arr[0] !== 0 || arr[1] < 2.0) continue;
+    let f = 0;
+    if (arr.length === 10) f = arr[9];
+    else if (arr.length === 12) f = arr[11];
+    if (!f) goodCells.add(key);
   }
 
   // Collect candidates: clear status, margin >= 3.0, road <= 300m,
@@ -557,10 +570,12 @@ function findOptimalSpots(data, clusterKm) {
     const margin = arr[1];
     if (margin < 3.0 || arr[0] !== 0) continue;
 
-    let roadDist = 99999;
-    if (arr.length === 9) roadDist = arr[8];
-    else if (arr.length === 11) roadDist = arr[10];
-    if (roadDist > 300) continue;
+    let roadDist = 99999, forest = 0;
+    if (arr.length === 9) { roadDist = arr[8]; }
+    else if (arr.length === 10) { roadDist = arr[8]; forest = arr[9]; }
+    else if (arr.length === 11) { roadDist = arr[10]; }
+    else if (arr.length === 12) { roadDist = arr[10]; forest = arr[11]; }
+    if (roadDist > 300 || forest) continue;
 
     // Check neighborhood: at least 60% of surrounding cells must also be good
     const [imgRow, col] = key.split(',').map(Number);
@@ -575,7 +590,7 @@ function findOptimalSpots(data, clusterKm) {
         }
       }
     }
-    if (total > 0 && good / total < 0.6) continue;
+    if (total > 0 && good / total < 0.8) continue;
 
     const rowFromSouth = m.rows - 1 - imgRow;
     const lat = m.lat_min + (rowFromSouth + 0.5) * m.step;

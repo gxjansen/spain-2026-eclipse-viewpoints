@@ -75,6 +75,14 @@
   .marker-actions button.pin { border-color: #1E88E5; color: #1565C0; }
   .marker-actions button.remove { border-color: #F44336; color: #D32F2F; }
 
+  .export-btn {
+    border: 1px solid #1565C0; background: white; color: #1565C0;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+    font-size: 12px; font-weight: 600; width: 100%;
+  }
+  .export-btn:hover { background: #E3F2FD; }
+  .export-btn:disabled { opacity: 0.5; cursor: wait; }
+
   .toggle-row {
     display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
   }
@@ -293,6 +301,32 @@ legend.onAdd = function() {
         <span>11 km</span><span>45 km</span>
       </div>
     </div>
+    <div style="margin-top:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:12px;color:#555">Min. duration</span>
+        <span id="duration-value" style="font-size:12px;font-weight:600;color:#333">60s</span>
+      </div>
+      <input type="range" id="duration-slider" min="0" max="120" value="60" step="5"
+        style="width:100%;accent-color:#1565C0;cursor:pointer">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#999">
+        <span>0s</span><span>120s</span>
+      </div>
+    </div>
+    <div style="margin-top:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:12px;color:#555">Max. road distance</span>
+        <span id="road-value" style="font-size:12px;font-weight:600;color:#333">300m</span>
+      </div>
+      <input type="range" id="road-slider" min="100" max="3000" value="300" step="100"
+        style="width:100%;accent-color:#1565C0;cursor:pointer">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#999">
+        <span>100m</span><span>3 km</span>
+      </div>
+    </div>
+    <div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px">
+      <button class="export-btn" id="export-btn">Download HD image</button>
+      <div id="export-status" style="font-size:11px;color:#888;margin-top:4px;display:none"></div>
+    </div>
     <div style="margin-top:6px;font-size:11px;color:#888;">
       Click for details, right-click to pin marker
     </div>
@@ -510,17 +544,36 @@ fetch('/data/grid_data.json')
     });
 
     // --- Optimal spots ---
-    findOptimalSpots(data, 28);
+    function refreshStars() {
+      const km = parseInt(document.getElementById('cluster-slider').value);
+      const dur = parseInt(document.getElementById('duration-slider').value);
+      const maxRoad = parseInt(document.getElementById('road-slider').value);
+      findOptimalSpots(data, km, dur, maxRoad);
+    }
+    refreshStars();
 
-    // Wire up cluster slider
-    const slider = document.getElementById('cluster-slider');
-    const valLabel = document.getElementById('cluster-value');
-    slider.addEventListener('input', function() {
-      valLabel.textContent = slider.value + ' km';
+    // Wire up sliders
+    const clusterSlider = document.getElementById('cluster-slider');
+    const clusterLabel = document.getElementById('cluster-value');
+    clusterSlider.addEventListener('input', function() {
+      clusterLabel.textContent = clusterSlider.value + ' km';
     });
-    slider.addEventListener('change', function() {
-      findOptimalSpots(data, parseInt(slider.value));
+    clusterSlider.addEventListener('change', refreshStars);
+
+    const durSlider = document.getElementById('duration-slider');
+    const durLabel = document.getElementById('duration-value');
+    durSlider.addEventListener('input', function() {
+      durLabel.textContent = durSlider.value + 's';
     });
+    durSlider.addEventListener('change', refreshStars);
+
+    const roadSlider = document.getElementById('road-slider');
+    const roadLabel = document.getElementById('road-value');
+    roadSlider.addEventListener('input', function() {
+      const v = roadSlider.value;
+      roadLabel.textContent = v >= 1000 ? (v/1000).toFixed(1) + ' km' : v + 'm';
+    });
+    roadSlider.addEventListener('change', refreshStars);
   })
   .catch(err => {
     console.error('Failed to load grid data:', err);
@@ -543,7 +596,7 @@ const starIcon = L.divIcon({
 
 const optimalGroup = L.layerGroup().addTo(map);
 
-function findOptimalSpots(data, clusterKm) {
+function findOptimalSpots(data, clusterKm, minDur, maxRoad) {
   const m = data.meta;
   const grid = data.grid;
   // Convert km to degrees (1° lat ≈ 111 km)
@@ -568,14 +621,15 @@ function findOptimalSpots(data, clusterKm) {
   const candidates = [];
   for (const [key, arr] of Object.entries(grid)) {
     const margin = arr[1];
-    if (margin < 3.0 || arr[0] !== 0) continue;
+    const dur = arr[7];
+    if (margin < 3.0 || arr[0] !== 0 || dur < minDur) continue;
 
     let roadDist = 99999, forest = 0;
     if (arr.length === 9) { roadDist = arr[8]; }
     else if (arr.length === 10) { roadDist = arr[8]; forest = arr[9]; }
     else if (arr.length === 11) { roadDist = arr[10]; }
     else if (arr.length === 12) { roadDist = arr[10]; forest = arr[11]; }
-    if (roadDist > 300 || forest) continue;
+    if (roadDist > maxRoad || forest) continue;
 
     // Check neighborhood: at least 60% of surrounding cells must also be good
     const [imgRow, col] = key.split(',').map(Number);
@@ -595,7 +649,6 @@ function findOptimalSpots(data, clusterKm) {
     const rowFromSouth = m.rows - 1 - imgRow;
     const lat = m.lat_min + (rowFromSouth + 0.5) * m.step;
     const lon = m.lon_min + (col + 0.5) * m.step;
-    const dur = arr[7];
 
     candidates.push({ lat, lon, margin, dur, roadDist, key });
   }
@@ -618,6 +671,213 @@ function findOptimalSpots(data, clusterKm) {
       .addTo(optimalGroup);
     mk.on('click', function() { showInfoAt(s.lat, s.lon); });
   }
+}
+
+// --- HD Export ---
+document.getElementById('export-btn').addEventListener('click', exportHD);
+
+function exportHD() {
+  const btn = document.getElementById('export-btn');
+  const status = document.getElementById('export-status');
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.textContent = 'Preparing...';
+
+  const MAX_TILES = 400;
+  const bounds = map.getBounds();
+  const baseZoom = Math.round(map.getZoom());
+  const TILE_SIZE = 256;
+
+  // Convert lat/lon to tile coordinates
+  function latLonToTile(lat, lon, z) {
+    const n = Math.pow(2, z);
+    const x = Math.floor((lon + 180) / 360 * n);
+    const latRad = lat * Math.PI / 180;
+    const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+    return { x, y };
+  }
+
+  // Find best zoom: try +3, +2, +1, +0 until tiles fit
+  function countTiles(z) {
+    const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+    const tMin = latLonToTile(ne.lat, sw.lng, z);
+    const tMax = latLonToTile(sw.lat, ne.lng, z);
+    return (tMax.x - tMin.x + 1) * (tMax.y - tMin.y + 1);
+  }
+  let zoom = baseZoom;
+  for (let extra = 3; extra >= 0; extra--) {
+    const z = Math.min(baseZoom + extra, 18);
+    if (countTiles(z) <= MAX_TILES) { zoom = z; break; }
+  }
+
+  function tileToLatLon(x, y, z) {
+    const n = Math.pow(2, z);
+    const lon = x / n * 360 - 180;
+    const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n)));
+    return { lat: latRad * 180 / Math.PI, lon };
+  }
+
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  const tMin = latLonToTile(ne.lat, sw.lng, zoom);
+  const tMax = latLonToTile(sw.lat, ne.lng, zoom);
+
+  const cols = tMax.x - tMin.x + 1;
+  const rows = tMax.y - tMin.y + 1;
+  const totalTiles = cols * rows;
+
+  const extraUsed = zoom - baseZoom;
+  if (extraUsed <= 0) {
+    status.textContent = `View too wide. Zoom in for HD export.`;
+    btn.disabled = false;
+    return;
+  }
+
+  const canvasW = cols * TILE_SIZE;
+  const canvasH = rows * TILE_SIZE;
+
+  status.textContent = `Downloading ${totalTiles} tiles (+${extraUsed} zoom)...`;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext('2d');
+
+  // Get the active base layer tile URL
+  const tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+  let loaded = 0;
+  const tilePromises = [];
+
+  for (let ty = tMin.y; ty <= tMax.y; ty++) {
+    for (let tx = tMin.x; tx <= tMax.x; tx++) {
+      const px = (tx - tMin.x) * TILE_SIZE;
+      const py = (ty - tMin.y) * TILE_SIZE;
+      const url = tileUrl.replace('{z}', zoom).replace('{x}', tx).replace('{y}', ty);
+
+      const p = new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function() {
+          ctx.drawImage(img, px, py, TILE_SIZE, TILE_SIZE);
+          loaded++;
+          status.textContent = `Tiles: ${loaded}/${totalTiles}`;
+          resolve();
+        };
+        img.onerror = function() { loaded++; resolve(); };
+        img.src = url;
+      });
+      tilePromises.push(p);
+    }
+  }
+
+  Promise.all(tilePromises).then(() => {
+    status.textContent = 'Drawing overlay...';
+
+    // Canvas geo bounds (from tile edges)
+    const nw = tileToLatLon(tMin.x, tMin.y, zoom);
+    const se = tileToLatLon(tMax.x + 1, tMax.y + 1, zoom);
+
+    // Draw visibility overlay if toggle is on
+    if (document.getElementById('toggle-visibility').checked) {
+      const ovImg = new Image();
+      ovImg.crossOrigin = 'anonymous';
+      ovImg.onload = function() {
+        drawOverlayAndFinish(ctx, ovImg, nw, se, canvasW, canvasH, canvas, btn, status);
+      };
+      ovImg.onerror = function() {
+        finishExport(ctx, nw, se, canvasW, canvasH, canvas, btn, status);
+      };
+      ovImg.src = '/data/overlay_visibility.png';
+    } else {
+      finishExport(ctx, nw, se, canvasW, canvasH, canvas, btn, status);
+    }
+  });
+}
+
+function drawOverlayAndFinish(ctx, ovImg, nw, se, canvasW, canvasH, canvas, btn, status) {
+  if (!gridData) { finishExport(ctx, nw, se, canvasW, canvasH, canvas, btn, status); return; }
+  const m = gridData.meta;
+
+  // Map overlay image pixel coords to canvas pixel coords
+  // Overlay covers [lat_min, lon_min] to [lat_max, lon_max]
+  // Canvas covers [se.lat, nw.lon] to [nw.lat, se.lon]
+  const ovLeft = (m.lon_min - nw.lon) / (se.lon - nw.lon) * canvasW;
+  const ovRight = (m.lon_max - nw.lon) / (se.lon - nw.lon) * canvasW;
+  // Lat is inverted (north = top = smaller y)
+  const ovTop = (nw.lat - m.lat_max) / (nw.lat - se.lat) * canvasH;
+  const ovBottom = (nw.lat - m.lat_min) / (nw.lat - se.lat) * canvasH;
+
+  ctx.globalAlpha = 0.7;
+  ctx.drawImage(ovImg, ovLeft, ovTop, ovRight - ovLeft, ovBottom - ovTop);
+  ctx.globalAlpha = 1.0;
+
+  finishExport(ctx, nw, se, canvasW, canvasH, canvas, btn, status);
+}
+
+function finishExport(ctx, nw, se, canvasW, canvasH, canvas, btn, status) {
+  // Draw star markers
+  optimalGroup.eachLayer(function(marker) {
+    const pos = marker.getLatLng();
+    const px = (pos.lng - nw.lon) / (se.lon - nw.lon) * canvasW;
+    const py = (nw.lat - pos.lat) / (nw.lat - se.lat) * canvasH;
+    if (px >= 0 && px <= canvasW && py >= 0 && py <= canvasH) {
+      drawStar(ctx, px, py, 12);
+    }
+  });
+
+  // Draw user markers
+  markers.forEach(function(marker) {
+    const pos = marker.getLatLng();
+    const px = (pos.lng - nw.lon) / (se.lon - nw.lon) * canvasW;
+    const py = (nw.lat - pos.lat) / (nw.lat - se.lat) * canvasH;
+    if (px >= 0 && px <= canvasW && py >= 0 && py <= canvasH) {
+      // Red pin
+      ctx.beginPath();
+      ctx.arc(px, py - 12, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#D32F2F';
+      ctx.fill();
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px - 5, py - 10);
+      ctx.lineTo(px + 5, py - 10);
+      ctx.closePath();
+      ctx.fillStyle = '#D32F2F';
+      ctx.fill();
+    }
+  });
+
+  status.textContent = 'Saving...';
+
+  canvas.toBlob(function(blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'eclipse-viewpoints-hd.png';
+    a.click();
+    URL.revokeObjectURL(url);
+    status.textContent = `Saved (${canvasW}x${canvasH}px)`;
+    btn.disabled = false;
+  }, 'image/png');
+}
+
+function drawStar(ctx, cx, cy, r) {
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const angle = -Math.PI / 2 + i * 4 * Math.PI / 5;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#FFD600';
+  ctx.fill();
+  ctx.strokeStyle = '#F57F17';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
 }
 </script>
 </body>

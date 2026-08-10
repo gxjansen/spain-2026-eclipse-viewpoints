@@ -40,7 +40,7 @@ SEARCH_START_UTC = "2026/8/12 18:00"
 SEARCH_END_UTC = "2026/8/12 20:45"
 
 # Spain bounding box (generous, covers entire potential totality path + margin)
-LAT_MIN, LAT_MAX = 39.5, 44.5
+LAT_MIN, LAT_MAX = 38.5, 44.5
 LON_MIN, LON_MAX = -10.5, 3.5
 
 # Grid resolutions

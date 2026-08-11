@@ -469,10 +469,14 @@ function showInfoAt(lat, lon, marker) {
       &middot; ${elev}m elevation
     </div>
     <div class="info-section">
+      <div class="info-row"><span class="info-label">Eclipse</span>
+        <span class="info-value" id="eclipse-span">…</span></div>
       <div class="info-row"><span class="info-label">Totality</span>
         <span class="info-value">${utcToCest(c2)} – ${utcToCest(c3)} CEST</span></div>
       <div class="info-row"><span class="info-label">Duration</span>
         <span class="info-value">${dur}s</span></div>
+      <div class="info-row"><span class="info-label">Sunset</span>
+        <span class="info-value" id="sunset-time">…</span></div>
       <div class="info-row"><span class="info-label">Sun altitude</span>
         <span class="info-value">${sunAlt}°</span></div>
       <div class="info-row"><span class="info-label">Sun azimuth</span>
@@ -485,6 +489,44 @@ function showInfoAt(lat, lon, marker) {
     ${forestHtml}
     ${markerHtml}
   `;
+
+  fillEclipseTimes(lat, lon);
+}
+
+// Sequence guard: a slow response for an earlier click must not overwrite a
+// later one.
+let eclipseTimesSeq = 0;
+
+function fillEclipseTimes(lat, lon) {
+  const seq = ++eclipseTimesSeq;
+  const spanEl = document.getElementById('eclipse-span');
+  const sunsetEl = document.getElementById('sunset-time');
+  if (!spanEl || !sunsetEl) return;
+
+  fetch(`/api/eclipse_times?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}`)
+    .then(r => r.json())
+    .then(t => {
+      if (seq !== eclipseTimesSeq) return;
+      const span = document.getElementById('eclipse-span');
+      const sunset = document.getElementById('sunset-time');
+      if (!span || !sunset) return;
+
+      if (t.c1 && t.c4) {
+        const note = t.c4_below_horizon
+          ? ' <span style="color:#999">(ends below horizon)</span>' : '';
+        span.innerHTML = `${utcToCest(t.c1)} – ${utcToCest(t.c4)} CEST${note}`;
+      } else {
+        span.textContent = 'unavailable';
+      }
+      sunset.textContent = t.sunset ? `${utcToCest(t.sunset)} CEST` : 'unavailable';
+    })
+    .catch(() => {
+      if (seq !== eclipseTimesSeq) return;
+      const span = document.getElementById('eclipse-span');
+      const sunset = document.getElementById('sunset-time');
+      if (span) span.textContent = 'unavailable';
+      if (sunset) sunset.textContent = 'unavailable';
+    });
 }
 
 window.pinAt = function(lat, lon) {

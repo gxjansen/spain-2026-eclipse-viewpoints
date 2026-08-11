@@ -59,6 +59,7 @@ uv run app.py
 - **Forest detection**: Cells inside mapped forest/woodland are flagged and excluded from optimal spots
 - **Search**: Find places by name (top-left search box)
 - **Click**: Get detailed info for any point (totality times, sun position, margin, road distance, forest status)
+- **Eclipse span and sunset**: The info panel shows first contact (C1) to last contact (C4) alongside totality, plus local sunset — across most of the zone the sun sets before the partial phase ends, which is flagged inline
 - **Google Maps link**: Open clicked location directly in Google Maps with a pin
 - **Persistent markers**: Right-click to place named, draggable markers — survive page refresh
 - **Layer toggle**: Switch between street map and terrain view

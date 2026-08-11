@@ -29,6 +29,8 @@ TAN_F2 = 0.0045911
 
 FLATTENING = 0.99664719
 EARTH_RADIUS_M = 6378140.0
+# Earth's sidereal rotation, degrees per second of UT (360 / 86164.1).
+EARTH_ROT_DEG_PER_SEC = 0.00417807
 
 
 def _poly(coef, t):
@@ -70,7 +72,13 @@ def _fundamental(t, rho_sin, rho_cos, lon_rad):
     e = _elements(t)
     # Hour angle of the observer relative to the shadow axis. Longitude is
     # positive east.
-    hh = e["mu"] + lon_rad
+    #
+    # mu is the ephemeris hour angle, referred to TDT. The Earth has rotated a
+    # further 1.002738 * DELTA_T of sidereal time by the corresponding UT
+    # instant, so the observer's hour angle needs that correction. Omitting it
+    # rotates the whole path west by 0.0041781 deg/s * DELTA_T, which on this
+    # eclipse's obliquely running track displaced the band ~16 km south.
+    hh = e["mu"] + lon_rad - math.radians(EARTH_ROT_DEG_PER_SEC * DELTA_T)
 
     xi = rho_cos * math.sin(hh)
     eta = rho_sin * math.cos(e["d"]) - rho_cos * math.cos(hh) * math.sin(e["d"])

@@ -8,6 +8,8 @@ from pathlib import Path
 import ephem
 from flask import Flask, send_from_directory, render_template, Response, request, jsonify
 
+from besselian import local_circumstances, hms as bess_hms
+
 app = Flask(__name__)
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -103,7 +105,7 @@ def _sun_alt(lat, lon, t):
 @lru_cache(maxsize=8192)
 def _eclipse_times(lat, lon):
     """C1/C4/sunset for one location. Cached on the rounded coordinate."""
-    c1, c4 = _find_contacts(lat, lon)
+    circ = local_circumstances(lat, lon)
 
     obs = _observer(lat, lon)
     obs.horizon = "-0:34"  # standard refraction at the horizon
@@ -113,12 +115,23 @@ def _eclipse_times(lat, lon):
     except (ephem.AlwaysUpError, ephem.NeverUpError):
         sunset = None
 
+    c4_ut = circ["c4"]
+    c4_below = False
+    if c4_ut is not None and sunset is not None:
+        c4_below = c4_ut > (_to_ut_seconds_of_day(sunset))
+
     return {
-        "c1": _hms(c1),
-        "c4": _hms(c4),
-        "c4_below_horizon": (c4 is not None and _sun_alt(lat, lon, c4) < 0),
+        "c1": bess_hms(circ["c1"]),
+        "c4": bess_hms(c4_ut),
+        "c4_below_horizon": c4_below,
         "sunset": _hms(sunset),
     }
+
+
+def _to_ut_seconds_of_day(t):
+    """ephem.Date -> seconds after 00:00 UT, to compare against Besselian output."""
+    _, _, _, h, mi, s = t.tuple()
+    return h * 3600 + mi * 60 + s
 
 
 @app.route("/")

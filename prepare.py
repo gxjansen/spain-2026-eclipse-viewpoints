@@ -14,6 +14,7 @@ Usage:
   uv run prepare.py
 """
 
+import datetime
 import gzip
 import json
 import math
@@ -28,6 +29,8 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
+from besselian import local_circumstances
+
 # ============================================================
 # Configuration
 # ============================================================
@@ -35,9 +38,13 @@ from tqdm import tqdm
 DATA_DIR = Path(__file__).parent / "data"
 SRTM_DIR = DATA_DIR / "srtm"
 
-# Eclipse search window (UTC)
-SEARCH_START_UTC = "2026/8/12 18:00"
-SEARCH_END_UTC = "2026/8/12 20:45"
+# Midnight UT on eclipse day, used to turn Besselian UT-seconds into ephem.Date
+ECLIPSE_DAY_UTC = "2026/8/12 00:00"
+
+# Nominal height for the coarse pass, which runs before terrain is known. Set
+# above the region's ground so the coarse pass errs inclusive and never gates
+# out a fine cell that qualifies once its real elevation is used.
+COARSE_SCAN_ELEV = 800.0
 
 # Spain bounding box (generous, covers entire potential totality path + margin)
 LAT_MIN, LAT_MAX = 38.5, 44.5
@@ -163,52 +170,33 @@ class SRTMElevation:
 # Eclipse Computation
 # ============================================================
 
-def _is_totality(obs):
-    """Check if the observer is currently experiencing totality."""
-    s = ephem.Sun(obs)
-    m = ephem.Moon(obs)
-    sep = float(ephem.separation(s, m))
-    moon_r = float(m.size) / 2.0 / 3600.0 * math.pi / 180.0
-    sun_r = float(s.size) / 2.0 / 3600.0 * math.pi / 180.0
-    return sep < (moon_r - sun_r) and moon_r > sun_r
+def _ut_seconds_to_date(seconds_ut):
+    """Besselian UT seconds-after-midnight -> ephem.Date on eclipse day."""
+    return ephem.Date(ephem.Date(ECLIPSE_DAY_UTC) + seconds_ut / 86400.0)
 
 
-def find_totality(lat, lon, t_start=None, t_end=None, dt_sec=20):
+def find_totality(lat, lon, elev=0.0, t_start=None, t_end=None, dt_sec=None):
     """Find C2 and C3 contact times for totality at a location.
 
     Returns (c2, c3) as ephem.Date or (None, None) if no totality.
+
+    Computed from Besselian elements. The earlier implementation scanned the
+    PyEphem sun/moon disc separation on a fixed time step, which resolved the
+    contacts only to that step and, lacking the umbral limb convention, placed
+    the path limits tens of kilometres off. That is invisible near the central
+    line and decisive at the edges, which is where sites get chosen.
+
+    elev is the observer height in metres; it shifts the contacts by about a
+    second at 300 m and rather more within a kilometre of the path limit, so
+    the fine pass passes the cell's own terrain height.
+
+    t_start, t_end and dt_sec are accepted for call compatibility and ignored:
+    the Besselian solution is closed-form, so there is nothing to bracket.
     """
-    obs = ephem.Observer()
-    obs.lat = str(lat)
-    obs.lon = str(lon)
-    obs.elevation = 0
-    obs.pressure = 0
-
-    if t_start is None:
-        t_start = ephem.Date(SEARCH_START_UTC)
-    if t_end is None:
-        t_end = ephem.Date(SEARCH_END_UTC)
-
-    dt = dt_sec / 86400.0
-    c2 = None
-    in_totality = False
-
-    t = t_start
-    while t <= t_end:
-        obs.date = t
-        total = _is_totality(obs)
-
-        if total and not in_totality:
-            c2 = t
-            in_totality = True
-        elif not total and in_totality:
-            return c2, t
-
-        t += dt
-
-    if c2 is not None:
-        return c2, t
-    return None, None
+    circ = local_circumstances(lat, lon, elev)
+    if not circ["is_total"]:
+        return None, None
+    return _ut_seconds_to_date(circ["c2"]), _ut_seconds_to_date(circ["c3"])
 
 
 def get_sun_position(lat, lon, t):
@@ -252,6 +240,14 @@ def check_ray(viewer_lat, viewer_lon, viewer_elev, azimuth_deg, srtm):
             max_dist = d
 
     return max_angle, max_dist
+
+
+def _round_to_second(t):
+    """Format an ephem.Date as HH:MM:SS, rounded rather than truncated."""
+    dt = ephem.Date(t).datetime()
+    if dt.microsecond >= 500000:
+        dt += datetime.timedelta(seconds=1)
+    return dt.strftime("%H:%M:%S")
 
 
 def analyze_point(lat, lon, c2, c3, srtm):
@@ -300,8 +296,10 @@ def analyze_point(lat, lon, c2, c3, srtm):
     duration = (c3 - c2) * 86400.0  # seconds
 
     # Convert times to HH:MM:SS UTC strings
-    c2_str = ephem.Date(c2).datetime().strftime("%H:%M:%S")
-    c3_str = ephem.Date(c3).datetime().strftime("%H:%M:%S")
+    # Round to the nearest second rather than truncating, so a regenerated
+    # grid matches the one rebuild_contacts.py writes via besselian.hms.
+    c2_str = _round_to_second(c2)
+    c3_str = _round_to_second(c3)
 
     if blocked_count == 0:
         status = "clear"
@@ -408,7 +406,7 @@ def main():
     with tqdm(total=total_coarse, desc="  Scanning") as pbar:
         for i, lat in enumerate(coarse_lats):
             for j, lon in enumerate(coarse_lons):
-                c2, c3 = find_totality(lat, lon)
+                c2, c3 = find_totality(lat, lon, elev=COARSE_SCAN_ELEV)
                 if c2 is not None:
                     mid = ephem.Date((c2 + c3) / 2.0)
                     coarse_totality[(i, j)] = {
@@ -503,13 +501,9 @@ def main():
                 pbar.update(1)
                 continue
 
-            # Narrow search for exact totality times
-            window = 5.0 / (24.0 * 60.0)  # 5 minutes in days
             c2, c3 = find_totality(
                 lat, lon,
-                t_start=ephem.Date(approx_mid - window),
-                t_end=ephem.Date(approx_mid + window),
-                dt_sec=5,
+                elev=srtm.get_elevation(lat, lon) + EYE_HEIGHT,
             )
 
             if c2 is None:

@@ -64,6 +64,30 @@ uv run app.py
 - **Persistent markers**: Right-click to place named, draggable markers — survive page refresh
 - **Layer toggle**: Switch between street map and terrain view
 
+## Checking cloud for a low sun
+
+A forecast for your viewing site describes the air above your head, which is
+not the air the sunlight travels through. At the 5-6° sun altitude of this
+eclipse the sightline moves ~10 km horizontally per 1 km of altitude, so the
+cloud that can hide totality sits tens of kilometres away toward the sun:
+
+| Layer | Height | Sampled at |
+|-------|--------|------------|
+| Low cloud | 1-2 km | 10-20 km |
+| Mid cloud | 4 km | 40 km |
+| Cirrus | 10 km | 97 km |
+
+`horizon_weather.py` samples each layer where the sightline actually reaches
+it, offsetting along the sun's azimuth and correcting for Earth curvature with
+the standard refraction factor k = 7/6:
+
+```bash
+uv run horizon_weather.py 41.425 0.295 --azimuth 285 --altitude 5.5
+```
+
+Low cloud on the sightline is the one that ends the day. Cirrus dims the corona
+but does not hide the sun.
+
 ## Color scale
 
 | Color | Meaning |

@@ -9,7 +9,8 @@ The sun will be only ~5° above the horizon during totality in NE Spain, making 
 ## What it does
 
 - Downloads 30m-resolution elevation data (SRTM1) for the totality zone in Spain
-- Computes sun/moon positions using PyEphem to find exact totality windows
+- Computes exact totality contacts from Besselian elements (validated against
+  the NASA path table to 0.3 km on the path limits and 0.1 s on the central line)
 - Casts rays along the sun's azimuth through the DEM to detect terrain obstructions
 - Accounts for Earth curvature and atmospheric refraction
 - Overlays road proximity data from OpenStreetMap to filter for accessible locations
